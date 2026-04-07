@@ -1,0 +1,42 @@
+# ==============================================================================
+# sdg-data-service -- uv workspace member
+# Pure FastAPI REST + NakshaClient
+# Port: 8001
+# ==============================================================================
+
+[project]
+name = "sdg-data-service"
+version = "0.1.0"
+description = "Data Service -- pure FastAPI REST + NakshaClient."
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "httpx>=0.27.0",
+    "requests>=2.32.0",
+    "urllib3>=2.2.0",
+    "tenacity>=8.2.0",
+    "databricks-sql-connector>=2.9.0",
+    "databricks-vectorsearch>=0.51",
+    "python-dotenv>=1.0.0",
+    "sdg-commons",
+    "python-multipart>=0.0.12",
+    "cachetools>=5.0.0",
+    "mcp>=1.0.0",
+    "boto3>=1.34.0",
+    "fastmcp==2.14.4",
+    # Security pin: litellm 1.82.7 and 1.82.8 were compromised (PYSEC-2026-2 / MAL-2026-2144).
+    "litellm==1.82.4",
+    "pyarrow>=17.0.0",
+    "langchain-mcp-adapters==0.2.1",
+]
+
+[tool.uv.sources]
+sdg-commons = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/data_service"]

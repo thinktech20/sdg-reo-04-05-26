@@ -1,0 +1,38 @@
+# ==============================================================================
+# sdg-event-history-assistant — uv workspace member
+# Strands SDK + FastAPI assistant
+# Port: 8004
+# ==============================================================================
+
+[project]
+name = "sdg-event-history-assistant"
+version = "0.1.0"
+description = "Event History Assistant — Strands SDK + LiteLLM"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "strands-agents>=0.1.0",
+    "strands-agents-tools>=0.1.0",
+    "boto3>=1.34.0",
+    "PyJWT>=2.8.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "sdg-commons",
+    # Security pin: litellm 1.82.7 and 1.82.8 were compromised (PYSEC-2026-2 / MAL-2026-2144).
+    "litellm==1.82.4",
+]
+
+[tool.uv.sources]
+sdg-commons = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/event_history"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

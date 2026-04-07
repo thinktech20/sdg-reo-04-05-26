@@ -1,0 +1,10 @@
+# uv workspace configuration.
+#
+# `native-tls = true` tells uv to use the OS certificate store rather than its
+# bundled CA bundle.  This handles corporate PKI (Zscaler / Netskope) on Linux
+# and macOS without requiring a per-command SSL_CERT_FILE prefix.
+#
+# On machines without a custom CA (CI/CD, developer machines outside the
+# corporate network) this setting is a no-op.
+
+native-tls = true

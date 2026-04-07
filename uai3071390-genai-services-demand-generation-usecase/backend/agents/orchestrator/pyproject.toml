@@ -1,0 +1,32 @@
+# ==============================================================================
+# sdg-orchestrator -- uv workspace member
+# LangGraph + FastAPI pipeline dispatcher
+# Port: 8081
+# ==============================================================================
+
+[project]
+name = "sdg-orchestrator"
+version = "0.1.0"
+description = "Orchestrator -- LangGraph serial pipeline dispatcher"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "langgraph>=0.3.0",
+    "langgraph-checkpoint-dynamodb>=0.1.0",
+    "langchain-core>=0.3.0",
+    "httpx>=0.27.0",
+    "boto3>=1.34.0",
+    "python-dotenv>=1.0.0",
+    "sdg-commons",
+]
+
+[tool.uv.sources]
+sdg-commons = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orchestrator"]

@@ -1,0 +1,34 @@
+INFO:     Will watch for changes in these directories: ['/home/u560060992/uai3071390-genai-services-demand-generation-usecase/backend']
+INFO:     Uvicorn running on http://127.0.0.1:8087 (Press CTRL+C to quit)
+INFO:     Started reloader process [15724] using WatchFiles
+INFO:     Started server process [15726]
+INFO:     Waiting for application startup.
+INFO:question_answer.main:Initialising Q&A Agent (port 8087, strands_debug=False)
+INFO:question_answer.main:Startup complete — LiteLLMModel + boto3.Session ready
+INFO:     Application startup complete.
+INFO:question_answer.api.v1.endpoints:assessment_chat: assessment_id=test-mcp-canonical-01 persona=RE msg_len=37 context_type=dict serial_number=342447641
+INFO:mcp.client.streamable_http:Received session ID: 6b9b340c627e412ba45747b4279cb84d
+INFO:mcp.client.streamable_http:Negotiated protocol version: 2025-11-25
+INFO:question_answer.core.agent_factory:MCP connecting: url=http://localhost:8001/dataservices/mcp/
+INFO:question_answer.tools.registry:registry: persona=RE allowed=7/26 tools
+INFO:question_answer.core.agent_factory:agent_factory: fetched mcp tools count=26 names=['read_ibat', 'read_prism', 'read_risk_matrix', 'query_er', 'query_risk_er', 'get_units_dataservices_api_v1_units_get', 'search_equipment_dataservices_api_v1_equipment_search_ge', 'data_readiness_dataservices_api_v1_equipment', 'er_cases_dataservices_api_v1_equipment', 'fsr_reports_dataservices_api_v1_equipment', 'outage_history_dataservices_api_v1_equipment', 'get_equipment_documents_dataservices_api_v1_equipment', 'upload_equipment_document_dataservices_api_v1_equipment', 'query_fsr', 'list_assessments_dataservices_api_v1_dataservices_api_v1', 'create_new_assessment_dataservices_api_v1_dataservices_a', 'read_re_report', 'read_re_table', 'read_risk_analysis', 'write_risk_analysis_dataservices_api_v1_dataservices_api', 'trigger_analysis_dataservices_api_v1_dataservices_api_v1', 'trigger_narrative_dataservices_api_v1_dataservices_api_v', 'get_analysis_status_dataservices_api_v1_dataservices_api', 'update_reliability_dataservices_api_v1_dataservices_api_', 'update_outage_dataservices_api_v1_dataservices_api_v1_as', 'post_feedback_dataservices_api_v1_dataservices_api_v1_as']
+INFO:question_answer.core.agent_factory:agent_factory: filtered tools persona=RE count=7 names=['read_ibat', 'read_prism', 'read_risk_matrix', 'query_er', 'query_fsr', 'read_re_report', 'read_re_table']
+INFO:question_answer.core.agent_factory:agent_factory: building agent persona=RE tools=7 session_id=test-mcp-canonical-01
+INFO:botocore.configprovider:Found endpoint for s3 via: environment_service.
+INFO:strands.telemetry.metrics:Creating Strands MetricsClient
+[92m17:32:35 - LiteLLM:INFO[0m: utils.py:3932 - 
+LiteLLM completion() model= bedrock-claude-sonnet-4.5; provider = litellm_proxy
+INFO:LiteLLM:
+LiteLLM completion() model= bedrock-claude-sonnet-4.5; provider = litellm_proxy
+INFO:     127.0.0.1:55034 - "POST /questionansweragent/api/v1/assessments/test-mcp-canonical-01/chat/reliability HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'agents/question-answer-agent/src/question_answer/tools/registry.py', 'services/data-service/tests/test_mcp_server_coverage.py', 'agents/question-answer-agent/tests/test_tools_registry.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:question_answer.main:Shutdown — releasing resources
+INFO:     Application shutdown complete.
+INFO:     Finished server process [15726]
+INFO:     Started server process [26161]
+INFO:     Waiting for application startup.
+INFO:question_answer.main:Initialising Q&A Agent (port 8087, strands_debug=False)
+INFO:question_answer.main:Startup complete — LiteLLMModel + boto3.Session ready
+INFO:     Application startup complete.

@@ -1,0 +1,50 @@
+# ==============================================================================
+# sdg-risk-eval-assistant — uv workspace member
+# Strands SDK + FastAPI assistant
+# Port: 8002
+# ==============================================================================
+
+[project]
+name = "sdg-risk-eval-assistant"
+version = "0.1.0"
+description = "Risk Evaluation Assistant — Strands SDK + LiteLLM"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "strands-agents[litellm]>=0.1.0",
+    # Security alignment: keep consistent with workspace pin; avoid compromised 1.82.7/1.82.8.
+    "litellm==1.82.4",
+    "strands-agents-tools>=0.1.0",
+    "boto3>=1.34.0",
+    "PyJWT>=2.8.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "sdg-commons",
+    "httpx==0.28.1",
+    "langchain==1.2.8",
+    "langchain-mcp-adapters==0.2.1",
+    "dotenv==0.9.9",
+    "aiofiles==24.1.0",
+    "pandas==2.3.0",
+    "openpyxl==3.1.5",
+    "Jinja2==3.1.6",
+    "python-jose",
+    "nest-asyncio==1.6.0",
+    "pytest==8.3.0",
+    "pytest-cov==6.0.0",
+    "pytest-asyncio==0.24.0",
+    "ruff==0.7.0",
+    "pre-commit==4.0.0",
+    "json-repair"
+]
+
+[tool.uv.sources]
+sdg-commons = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/risk_evaluation"]

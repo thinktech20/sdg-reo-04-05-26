@@ -1,0 +1,164 @@
+title SDG Risk Analyser — End-to-End Sequence (March 2026)
+
+actor "Browser / React UI" as UI #dae8fc
+participant "data-service\n:8086" as DS #d5e8d4
+participant "orchestrator\n(LangGraph) :8081" as ORC #d5e8d4
+participant "risk-eval A1\n:8082" as RE #fff2cc
+participant "event-history A3\n:8084" as EH #fff2cc
+participant "narrative A2\n:8083" as NR #fff2cc
+participant "qna-agent A4\n:8087" as QNA #fff2cc
+participant "LiteLLM Proxy\n(dev-gateway)" as LLM #f8cecc
+database "DynamoDB\n(local / AWS)" as DDB #e1d5e7
+database "S3 / MinIO\n(session store)" as S3 #e1d5e7
+
+note over DDB: Tables:\nexecution-state-store  PK=esn SK=createdAt  GSI=assessment-workflow-index\nrisk-analysis-output   PK=esn SK=createdAt  GSI=ra-assessment-index\nnarrative-summary      PK=esn SK=createdAt  GSI=ns-assessment-index\nevent-history-report   PK=esn SK=createdAt  GSI=eh-assessment-index\norchestrator-checkpointer  PK=thread_id SK=checkpoint_ns (LangGraph-managed)
+
+group Pre-Assessment
+  UI->DS: GET /api/units?plantId=…
+  DS-->UI: { trains: […] }
+  UI->DS: GET /api/equipment/search?esn={esn}
+  DS-->UI: { equipment }
+  UI->DS: GET /api/equipment/{esn}/er-cases\nGET /api/equipment/{esn}/fsr-reports\nGET /api/equipment/{esn}/outage-history\nGET /api/equipment/{esn}/data-readiness
+  DS-->UI: equipment data
+  UI->DS: POST /api/assessments\n{ esn, unitId, title, persona, workflowId,\n  dataTypes, dateFrom, dateTo, equipmentType, … }
+  DS->DDB: PutItem → execution-state-store\n(esn=esn, createdAt=now, assessmentId,\n persona, workflowId, filters={dataTypes,fromDate,toDate})
+  DS-->UI: 201  { assessment: { id, esn, … } }
+end
+
+group PHASE 1 — Risk Analysis (RE_DEFAULT | OE_DEFAULT)
+  note over UI: User clicks [Run Analysis]
+  UI->DS: POST /api/assessments/{id}/analyze/run\n{ persona: RE|OE\n  equipmentType, serialNumber,\n  workflowId? (defaults to {persona}_DEFAULT) }
+  DS->DDB: write IN_QUEUE → execution-state-store\n(workflowId = RE_DEFAULT | OE_DEFAULT)
+  DS-->UI: 202 Accepted\n{ assessmentId, workflowId, workflowStatus: PENDING }
+  DS->>ORC: [background FastAPI task]\nPOST /orchestrator/api/v1/assessments/{id}/run\n{ assessment_id, job_type: "run", esn, persona,\n  input_payload: { persona, equipmentType, serialNumber,\n    dataTypes: assessment.filters.dataTypes,\n    dateFrom:  assessment.filters.fromDate,\n    dateTo:    assessment.filters.toDate } }
+  note over ORC: job_store.write_job(job_type="run", status=PENDING)\nthen _run_pipeline starts as background task
+  ORC-->DS: 202 Accepted  { assessmentId, status: PENDING }
+  DS->DDB: write IN_PROGRESS → execution-state-store\n(workflowId = RE_DEFAULT | OE_DEFAULT)
+
+  note over ORC: first_node = "risk_eval"\njob_store.write_job status=RUNNING, activeNode=risk_eval
+
+  ORC->+RE: POST /riskevaluationassistant/api/v1/risk-eval/run\n{ assessment_id, esn, serial_number,\n  component_type, persona,\n  filters: { data_types, date_from, date_to } }\n(orchestrator normalises camelCase→snake_case)\n[_call_agent: timeout=360s, max_retries=3, backoff=attempt×5s\n retries on TimeoutException | NetworkError | HTTP 5xx — 4xx not retried]
+
+  alt AGENT_SIMULATE_MODE = true
+    note over RE: asyncio.sleep(AGENT_SIM_DELAY_SECS)
+    RE->DS: POST /internal/assessments/{id}/risk-eval-sample\n{ assessmentId, esn, payload: { findings, summary } }\n⚠ TODO(risk-eval team): replace with production persistence
+    DS->DDB: PutItem → risk-analysis-output\n(esn, createdAt, findings)
+    DS-->RE: 200 OK
+  else AGENT_SIMULATE_MODE = false
+    RE->LLM: POST /v1/chat/completions\n(litellm_proxy/gemini-3-flash)
+    LLM-->RE: risk findings / categories
+  end
+
+  RE-->-ORC: 200  { data, findings, riskCategories,\n       status: completed }
+  ORC->DDB: LangGraph checkpoint after risk_eval_node\n→ orchestrator-checkpointer\n(thread_id = "{assessment_id}:run:{persona}")
+
+  opt OE persona only
+    ORC->+EH: POST /eventhistoryassistant/api/v1/event-history/run\n{ assessment_id, esn, persona: OE }\n[_call_agent: timeout=360s, max_retries=3, backoff=attempt×5s]
+    EH->LLM: POST /v1/chat/completions (gemini-3-flash)
+    LLM-->EH: event history analysis
+    EH-->-ORC: 200  { eventHistory, status: completed }
+    ORC->DDB: LangGraph checkpoint after event_history_node
+  end
+
+  note over ORC: finalize_node → final_result\njob_store.write_job status=COMPLETE, result=final_result
+
+  ORC->DS: PATCH /internal/assessments/{id}/execution-state\n{ workflowId, nodeTimings, activeNode }\n[fire-and-forget with circuit-breaker, up to 3 retries]
+  DS->DDB: UpdateItem → execution-state-store\n(activeNode, nodeTimings)
+
+  loop data-service polls until status=COMPLETE
+note over DS: DS poll ceiling: ORCHESTRATOR_POLL_MAX_ATTEMPTS=200 × 3s = 600s (env-tunable, was 180s)
+    DS->ORC: GET /orchestrator/api/v1/assessments/{id}/status?jobType=run
+    ORC-->DS: { status: RUNNING|COMPLETE|FAILED,\n  activeNode, nodeTimings, result? }
+  end
+
+  note over DS: status=="COMPLETE" → _persist_result()\nRE: group findings by operation "Rewind"\n    → write risk-analysis-output\n    → write narrative-summary if result has narrativeSummary\nOE: write event-history-report
+
+  DS->DDB: RE only: write RiskAnalysis → risk-analysis-output\n(esn, createdAt, raw_rows, grouped_findings)
+  DS->DDB: OE only: write EventHistory → event-history-report\n(esn, createdAt, events)
+  DS->DDB: write COMPLETED → execution-state-store\n(workflowId = RE_DEFAULT | OE_DEFAULT)
+
+  DS->>QNA: POST /questionansweragent/api/v1/sessions/init\n{ assessment_id, persona, context: result }\n[fire-and-forget — errors swallowed; only for *_DEFAULT, not narrative]
+
+  loop Frontend polls every ~3 s
+    UI->DS: GET /api/assessments/{id}/status\n    ?workflowId=RE_DEFAULT
+    DS->DDB: Query assessment-workflow-index\n→ execution-state-store
+    DS-->UI: { assessmentId, workflowId,\n  workflowStatus: IN_QUEUE|IN_PROGRESS|COMPLETED|FAILED,\n  activeNode?, nodeTimings? }
+  end
+
+  UI->DS: GET /api/assessments/{id}/findings
+  DS->DDB: read risk-analysis-output\n(ra-assessment-index)
+  DS-->UI: { assessmentId, findings: […], feedback: {…} }
+
+  UI->DS: GET /api/assessments/{id}
+  DS->DDB: read execution-state-store + risk-analysis-output
+  DS-->UI: { assessment, reliabilityRiskCategories,\n  workflowStatus, narrativeSummary? }
+end
+
+group User Feedback
+  note over UI: User reviews findings, accepts / edits per row
+  UI->DS: POST /api/assessments/{id}/findings/{findingId}/feedback\n{ feedback: up|down, comments, feedbackType,\n  userId, userName }
+  DS->DDB: UpdateItem → risk-analysis-output (append feedback)
+  DS-->UI: 200  { findingId, feedback }
+end
+
+group PHASE 2 — Narrative (RE_NARRATIVE | OE_NARRATIVE)\n[optional — explicit re-trigger after feedback review]
+  note over UI: User clicks [Generate Narrative]\n(RE_DEFAULT already persists narrativeSummary if\norchestrator returns it; this is a standalone re-run)
+  UI->DS: POST /api/assessments/{id}/analyze/narrative\n{ persona: RE|OE }
+  DS->DDB: write IN_QUEUE → execution-state-store\n(workflowId = RE_NARRATIVE | OE_NARRATIVE)
+  DS-->UI: 202 Accepted\n{ assessmentId, workflowId: RE_NARRATIVE, workflowStatus: PENDING }
+  DS->>ORC: [background FastAPI task]\nPOST /orchestrator/api/v1/assessments/{id}/run\n{ assessment_id, job_type: "narrative",\n  esn, persona,\n  input_payload: { persona } }
+  note over ORC: job_store.write_job(job_type="narrative", status=PENDING)\nfirst_node = "narrative"
+  ORC-->DS: 202 Accepted
+  DS->DDB: write IN_PROGRESS → execution-state-store\n(workflowId = RE_NARRATIVE | OE_NARRATIVE)
+
+  ORC->+NR: POST /summarizationassistant/api/v1/narrative/run\n{ assessment_id, esn, persona }\n(SSL_VERIFY=False env set; LITELLM_SSL_VERIFY=false)\n[_call_agent: timeout=360s, max_retries=3, backoff=attempt×5s]
+  NR->DS: GET /api/assessments/{id}/findings\n(load findings + feedback as LLM context)
+  DS->DDB: read risk-analysis-output (ra-assessment-index)
+  DS-->NR: { findings: […], feedback: {…} }
+  NR->LLM: POST /v1/chat/completions (gemini-3-flash)
+  LLM-->NR: narrative text
+  NR-->-ORC: 200  { narrativeSummary: "…" }
+
+  ORC->DDB: LangGraph checkpoint after narrative_node\n→ orchestrator-checkpointer\n(thread_id = "{assessment_id}:narrative:{persona}")
+
+  ORC->DS: PATCH /internal/assessments/{id}/execution-state\n{ workflowId: RE_NARRATIVE, nodeTimings }\n[fire-and-forget with circuit-breaker]
+  DS->DDB: UpdateItem → execution-state-store (nodeTimings)
+
+  loop data-service polls until status=COMPLETE
+note over DS: Same 600s ceiling for narrative poll
+    DS->ORC: GET /orchestrator/api/v1/assessments/{id}/status?jobType=narrative
+    ORC-->DS: { status: RUNNING|COMPLETE|FAILED,\n  result: { narrativeSummary } }
+  end
+
+  DS->DDB: write NarrativeSummary → narrative-summary\n(esn, createdAt, GSI: ns-assessment-index)
+  DS->DDB: write COMPLETED → execution-state-store\n(workflowId = RE_NARRATIVE | OE_NARRATIVE)
+  note over DS: QnA warm-up NOT triggered\nfor *_NARRATIVE workflows
+
+  loop Frontend polls
+    UI->DS: GET /api/assessments/{id}/status\n    ?workflowId=RE_NARRATIVE
+    DS->DDB: Query assessment-workflow-index
+    DS-->UI: { workflowStatus: IN_QUEUE|IN_PROGRESS|COMPLETED }
+  end
+
+  UI->DS: GET /api/assessments/{id}
+  DS->DDB: read risk-analysis-output + narrative-summary
+  DS-->UI: { findings, reliabilityRiskCategories,\n  narrativeSummary, workflowStatus: COMPLETED }
+
+  UI->DS: GET /api/assessments/{id}/export/pdf
+  DS-->UI: PDF binary stream
+end
+
+group PHASE 3 — QnA Chat (session auto-initialised at end of PHASE 1)
+  note over UI: User types question in chat panel
+  UI->+QNA: POST /qna/api/assessments/{id}/chat/reliability\n{ message, context }
+  note over UI,QNA: Frontend nginx rewrites /qna/* → /questionansweragent/*
+  QNA->S3: GET session history
+  QNA->DS: GET /dataservices/api/v1/assessments/{id}\n(Strands tool call — load assessment context)
+  DS->DDB: read risk-analysis-output + narrative-summary
+  DS-->QNA: { findings, narrativeSummary }
+  QNA->LLM: POST /v1/chat/completions\n(gemini-3-flash, streaming)
+  LLM-->QNA: streamed tokens
+  QNA->S3: PUT updated session history
+  QNA-->-UI: streaming answer (SSE / chunked)
+end
+

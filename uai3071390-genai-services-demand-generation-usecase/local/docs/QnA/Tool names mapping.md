@@ -1,0 +1,24 @@
+# Tool Names Mapping
+
+| Name in Confluence | Name in System Prompt | Name in DS Code/Specs | MCP Canonical Name (server.py) | QnA Agent (RE) | QnA Agent (OE) | Risk-Eval Assistant |
+|---|---|---|---|---|---|---|
+| Query FSR | `query_fsr` | `query_fsr` | `query_fsr` | YES | YES | YES (raw operationId) |
+| Query ER | `query_er` | `query_er_vs` | `query_er` | YES | YES | — |
+| Read IBAT | `read_ibat` | `read_ibat_by_serial` | `read_ibat` | YES | YES | — |
+| Read PRISM | `read_prism` | `read_prism_by_serial` | `read_prism` | YES | — | — |
+| Read Risk Matrix | `read_risk_matrix` | `load_risk_matrix` | `read_risk_matrix` | YES | YES | YES (raw operationId) |
+| Read RE Table | `read_re_table` | `get_findings` | `read_re_table` | YES | YES | — |
+| Read RE Report | `read_re_report` | `get_assessment_by_id` | `read_re_report` | YES | YES | — |
+| Read Event Master | `read_event_master` | (no route yet) | (not in MCP yet) | — | YES (pending) | — |
+| Read OE Event Report | `read_oe_event_report` | `read_event_report` | (not in MCP yet) | — | YES (pending) | — |
+| Read OE Table | `read_oe_table` | (no route yet) | (not in MCP yet) | — | YES (pending) | — |
+| Query Risk ER | (not in prompts) | `get_risk_er_cases_endpoint` | `query_risk_er` | — | — | YES (raw operationId) |
+| Read Risk Analysis | (not in prompts) | `get_risk_analysis` | `read_risk_analysis` | — | — | — |
+
+## Notes
+
+- Only QnA Agent and Risk-Eval Assistant use MCP tools. No other agents (event-history, narrative-summary, orchestrator) consume MCP.
+- QnA Agent receives canonical names from server and filters via `_PERSONA_TOOLS` in `registry.py`.
+- Risk-Eval Assistant bypasses canonical naming — calls tools by raw auto-generated operationId (fragile, breaks on route changes).
+- 3 OE tools (`read_event_master`, `read_oe_table`, `read_oe_event_report`) are in QnA OE allowlist + prompt but have no data-service route yet.
+- `read_risk_analysis` and `query_risk_er` are on MCP server but not in any QnA persona allowlist or system prompt.

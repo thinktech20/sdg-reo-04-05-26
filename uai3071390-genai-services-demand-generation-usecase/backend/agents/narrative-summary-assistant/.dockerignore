@@ -1,0 +1,22 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Test artefacts
+tests/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Type checking / linting
+.mypy_cache/
+.ruff_cache/
+
+# Dev secrets
+.env
+.env.local
+*.log

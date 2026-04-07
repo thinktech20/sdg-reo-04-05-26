@@ -1,0 +1,24 @@
+# REChain User Prompt Template
+# Combines HEATMAP question, IBAT equipment data, FSR chunks, and ER chunks
+# into a structured LLM user prompt for risk analysis
+
+prompt_template:
+  name: "issue_based_user_prompt"
+  description: "Prompt template for issue based user prompt for risk analysis combining heatmap, IBAT, FSR, and ER data"
+  input_variables:
+    - "heatmap_section"
+    - "ibat_section"
+    - "fsr_section"
+    - "er_section"
+  template: |
+    === HEATMAP_QUESTION ===
+    {heatmap_section}
+
+    === IBAT ===
+    {ibat_section}
+
+    === FSR_CHUNKS ===
+    {fsr_section}
+
+    === ER_CHUNKS ===
+    {er_section}

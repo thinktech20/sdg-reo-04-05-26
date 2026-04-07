@@ -1,0 +1,53 @@
+INFO:     Will watch for changes in these directories: ['/home/u560060992/uai3071390-genai-services-demand-generation-usecase/backend']
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+INFO:     Started reloader process [13786] using WatchFiles
+2026-04-02 17:29:24,392 INFO data_service.main [MCP] Using DATA_SERVICE_URL: https://dev-unitrisk.apps.gevernova.net/dataservices
+2026-04-02 17:29:24,694 INFO data_service.main [MCP] Initialized MCP server and session manager
+2026-04-02 17:29:24,727 INFO data_service.main [MCP] Mounted MCP server at /dataservices/mcp/ (streamable-http transport)
+INFO:     Started server process [13788]
+INFO:     Waiting for application startup.
+2026-04-02 17:29:24,730 INFO data_service.main data-service: starting (mode=mock)
+2026-04-02 17:29:24,814 INFO docket.worker Starting worker 'G6WP2KC4E#13788' with the following tasks:
+2026-04-02 17:29:24,815 INFO docket.worker * trace(message: str, ...)
+2026-04-02 17:29:24,815 INFO docket.worker * fail(message: str, ...)
+2026-04-02 17:29:24,815 INFO docket.worker * sleep(seconds: float, ...)
+2026-04-02 17:29:24,815 INFO mcp.server.streamable_http_manager StreamableHTTP session manager started
+2026-04-02 17:29:24,815 INFO data_service.main [MCP] MCP server and session manager started
+INFO:     Application startup complete.
+INFO:     127.0.0.1:48798 - "GET /health HTTP/1.1" 200 OK
+2026-04-02 17:31:03,985 INFO mcp.server.streamable_http_manager Created new transport with session ID: 3e47d1d10a83428d91e914ab23c987b0
+INFO:     127.0.0.1:57316 - "POST /dataservices/mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57328 - "POST /dataservices/mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:57340 - "GET /dataservices/mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57348 - "POST /dataservices/mcp/ HTTP/1.1" 200 OK
+2026-04-02 17:31:04,004 INFO mcp.server.lowlevel.server Processing request of type ListToolsRequest
+2026-04-02 17:31:04,919 INFO mcp.server.streamable_http Terminating session: 3e47d1d10a83428d91e914ab23c987b0
+INFO:     127.0.0.1:57364 - "DELETE /dataservices/mcp/ HTTP/1.1" 200 OK
+2026-04-02 17:32:34,945 INFO mcp.server.streamable_http_manager Created new transport with session ID: 6b9b340c627e412ba45747b4279cb84d
+INFO:     127.0.0.1:38006 - "POST /dataservices/mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38016 - "GET /dataservices/mcp/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38022 - "POST /dataservices/mcp/ HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:38038 - "POST /dataservices/mcp/ HTTP/1.1" 200 OK
+2026-04-02 17:32:34,968 INFO mcp.server.lowlevel.server Processing request of type ListToolsRequest
+2026-04-02 17:32:47,764 INFO mcp.server.streamable_http Terminating session: 6b9b340c627e412ba45747b4279cb84d
+INFO:     127.0.0.1:45158 - "DELETE /dataservices/mcp/ HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'agents/question-answer-agent/src/question_answer/tools/registry.py', 'services/data-service/tests/test_mcp_server_coverage.py', 'agents/question-answer-agent/tests/test_tools_registry.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-04-02 18:24:54,108 INFO mcp.server.streamable_http_manager StreamableHTTP session manager shutting down
+2026-04-02 18:24:54,156 INFO data_service.main data-service: shutdown
+INFO:     Application shutdown complete.
+INFO:     Finished server process [13788]
+2026-04-02 18:24:58,250 INFO data_service.main [MCP] Using DATA_SERVICE_URL: https://dev-unitrisk.apps.gevernova.net/dataservices
+2026-04-02 18:24:58,693 INFO data_service.main [MCP] Initialized MCP server and session manager
+2026-04-02 18:24:58,748 INFO data_service.main [MCP] Mounted MCP server at /dataservices/mcp/ (streamable-http transport)
+INFO:     Started server process [26166]
+INFO:     Waiting for application startup.
+2026-04-02 18:24:58,751 INFO data_service.main data-service: starting (mode=mock)
+2026-04-02 18:24:58,835 INFO docket.worker Starting worker 'G6WP2KC4E#26166' with the following tasks:
+2026-04-02 18:24:58,835 INFO docket.worker * trace(message: str, ...)
+2026-04-02 18:24:58,836 INFO docket.worker * fail(message: str, ...)
+2026-04-02 18:24:58,836 INFO docket.worker * sleep(seconds: float, ...)
+2026-04-02 18:24:58,837 INFO mcp.server.streamable_http_manager StreamableHTTP session manager started
+2026-04-02 18:24:58,837 INFO data_service.main [MCP] MCP server and session manager started
+INFO:     Application startup complete.

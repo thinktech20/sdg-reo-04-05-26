@@ -1,0 +1,381 @@
+# ==============================================================================
+# SDG local dev stack
+# Usage:
+#   cp backend/.env.example backend/.env   # fill in values
+#   docker compose up --build
+#
+# Services (boot order):
+#   dynamodb-local → dynamodb-init
+#   minio → minio-init
+#   data-service              ← dynamodb-local
+#   risk-eval, narrative, event-history ← data-service
+#   qna-agent                           ← data-service + minio
+#   orchestrator                        ← risk-eval + narrative + event-history
+#   frontend                            (standalone, port 3000)
+#
+# All backend images share build context: ./backend/
+# ==============================================================================
+
+name: sdg
+
+x-healthcheck-python: &hc-python
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 20s
+
+services:
+  # ── DynamoDB Local ──────────────────────────────────────────────────────────────────
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    command: "-jar DynamoDBLocal.jar -sharedDb -inMemory"
+    ports:
+      - "8000:8000"   # DynamoDB API (also accessible at host:8000)
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo -n > /dev/tcp/localhost/8000' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # Create tables after DynamoDB Local is healthy
+  dynamodb-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    env_file:
+      - path: ./backend/.env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      AWS_DEFAULT_REGION: ${DYNAMODB_REGION:-us-east-1}
+    entrypoint: >-
+      /bin/sh -c '
+        ENDPOINT=http://dynamodb-local:8000 &&
+        echo "Waiting for DynamoDB Local..." &&
+        until aws dynamodb list-tables --endpoint-url $$ENDPOINT --no-cli-pager > /dev/null 2>&1; do echo "DynamoDB not ready yet, retrying in 2s..." && sleep 2; done &&
+        aws dynamodb create-table --endpoint-url $$ENDPOINT --table-name $${RISK_ANALYSIS_TABLE:-risk-analysis-output} --attribute-definitions AttributeName=esn,AttributeType=S AttributeName=createdAt,AttributeType=S AttributeName=assessmentId,AttributeType=S --key-schema AttributeName=esn,KeyType=HASH AttributeName=createdAt,KeyType=RANGE --global-secondary-indexes "[{\"IndexName\":\"uai3071390-dev-sdg-ra-assessment-index\",\"KeySchema\":[{\"AttributeName\":\"assessmentId\",\"KeyType\":\"HASH\"}],\"Projection\":{\"ProjectionType\":\"ALL\"}}]" --billing-mode PAY_PER_REQUEST 2>&1 | grep -v ResourceInUseException || true &&
+        aws dynamodb create-table --endpoint-url $$ENDPOINT --table-name $${NARRATIVE_SUMMARY_TABLE:-narrative-summary} --attribute-definitions AttributeName=esn,AttributeType=S AttributeName=createdAt,AttributeType=S AttributeName=assessmentId,AttributeType=S --key-schema AttributeName=esn,KeyType=HASH AttributeName=createdAt,KeyType=RANGE --global-secondary-indexes "[{\"IndexName\":\"uai3071390-dev-sdg-ns-assessment-index\",\"KeySchema\":[{\"AttributeName\":\"assessmentId\",\"KeyType\":\"HASH\"}],\"Projection\":{\"ProjectionType\":\"ALL\"}}]" --billing-mode PAY_PER_REQUEST 2>&1 | grep -v ResourceInUseException || true &&
+        aws dynamodb create-table --endpoint-url $$ENDPOINT --table-name $${EVENT_HISTORY_TABLE:-event-history-report} --attribute-definitions AttributeName=esn,AttributeType=S AttributeName=createdAt,AttributeType=S AttributeName=assessmentId,AttributeType=S --key-schema AttributeName=esn,KeyType=HASH AttributeName=createdAt,KeyType=RANGE --global-secondary-indexes "[{\"IndexName\":\"uai3071390-dev-sdg-eh-assessment-index\",\"KeySchema\":[{\"AttributeName\":\"assessmentId\",\"KeyType\":\"HASH\"}],\"Projection\":{\"ProjectionType\":\"ALL\"}}]" --billing-mode PAY_PER_REQUEST 2>&1 | grep -v ResourceInUseException || true &&
+        aws dynamodb create-table --endpoint-url $$ENDPOINT --table-name $${EXECUTION_STATE_TABLE:-execution-state-store} --attribute-definitions AttributeName=esn,AttributeType=S AttributeName=createdAt,AttributeType=S AttributeName=assessmentId,AttributeType=S AttributeName=workflowId,AttributeType=S --key-schema AttributeName=esn,KeyType=HASH AttributeName=createdAt,KeyType=RANGE --global-secondary-indexes "[{\"IndexName\":\"uai3071390-dev-sdg-assessment-workflow-index\",\"KeySchema\":[{\"AttributeName\":\"assessmentId\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"workflowId\",\"KeyType\":\"RANGE\"}],\"Projection\":{\"ProjectionType\":\"ALL\"}}]" --billing-mode PAY_PER_REQUEST 2>&1 | grep -v ResourceInUseException || true &&
+        aws dynamodb create-table --endpoint-url $$ENDPOINT --table-name $${LANGGRAPH_CHECKPOINTER_TABLE:-orchestrator-checkpointer} --attribute-definitions AttributeName=thread_id,AttributeType=S AttributeName=checkpoint_ns,AttributeType=S --key-schema AttributeName=thread_id,KeyType=HASH AttributeName=checkpoint_ns,KeyType=RANGE --billing-mode PAY_PER_REQUEST 2>&1 | grep -v ResourceInUseException || true &&
+        echo "DynamoDB tables ready"
+      '
+    restart: on-failure
+  # ── MinIO (local S3 for session store) ───────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console: http://localhost:9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Create the session bucket after MinIO is healthy
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file:
+      - path: ./backend/.env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1},minio
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1},minio
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        i=0
+        until mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}; do
+          i=$$((i+1))
+          if [ $$i -ge 30 ]; then
+            echo 'MinIO alias setup failed after 30 retries'
+            exit 1
+          fi
+          echo "MinIO not ready yet (attempt $$i/30), retrying in 2s..."
+          sleep 2
+        done
+        mc mb --ignore-existing local/${SESSION_S3_BUCKET_NAME:-app-uai3071390-sdg-dev-s3-qna-session}
+        mc mb --ignore-existing local/${CHECKPOINTER_S3_BUCKET:-sdg-checkpointer-offload}
+        echo 'MinIO buckets ready'
+    restart: on-failure
+
+  # ── Data Service ──────────────────────────────────────────────────────────────
+  data-service:
+    build:
+      context: ./backend
+      dockerfile: services/data-service/Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    ports:
+      - "8086:8086"   # Exposed so the browser can call it directly (no nginx proxy)
+    env_file:
+      - path: ./backend/.env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATA_SERVICE_URL: http://localhost:8086
+      DYNAMODB_ENDPOINT_URL: http://dynamodb-local:8000
+      DYNAMODB_REGION: ${DYNAMODB_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL:-http://orchestrator:8081}
+      ORCHESTRATOR_POLL_INTERVAL_SECONDS: ${ORCHESTRATOR_POLL_INTERVAL_SECONDS:-3}
+      ORCHESTRATOR_POLL_MAX_ATTEMPTS: ${ORCHESTRATOR_POLL_MAX_ATTEMPTS:-0}
+      QNA_AGENT_URL: ${QNA_AGENT_URL:-http://qna-agent:8087}
+      USE_MOCK: ${USE_MOCK:-false}
+      USE_MOCK_ASSESSMENTS: ${USE_MOCK_ASSESSMENTS:-false}
+      APP_PREFIX: ${APP_PREFIX:-uai3071390-dev-sdg}
+    depends_on:
+      dynamodb-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8086/health').read()"]
+      <<: *hc-python
+
+  # ── A1: Risk Evaluation Assistant ─────────────────────────────────────────
+  risk-eval:
+    build:
+      context: ./backend
+      dockerfile: agents/risk-evaluation-assistant/Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    ports:
+      - "8082:8082"
+    env_file:
+      - path: ./backend/.env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATA_SERVICE_URL: http://data-service:8086
+      MCP_SERVER_PARAMS: ${MCP_SERVER_PARAMS:-http://data-service:8086/dataservices/mcp/}
+      AUTH_LOCAL_MODE: "true"
+      AGENT_SIMULATE_MODE: "false"
+      AGENT_SIM_DELAY_SECS: ${AGENT_SIM_DELAY_SECS:-10}
+      LITELLM_SSL_VERIFY: ${LITELLM_SSL_VERIFY:-false}
+      SSL_CERT_FILE: /app/ca-bundle.crt
+      REQUESTS_CA_BUNDLE: /app/ca-bundle.crt
+    depends_on:
+      data-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+            "import urllib.request; urllib.request.urlopen('http://localhost:8082/riskevaluationassistant/api/v1/risk-eval/healthcheck').read()"]
+      <<: *hc-python
+
+  # ── A2: Narrative Summary Assistant ───────────────────────────────────────
+  narrative:
+    build:
+      context: ./backend
+      dockerfile: agents/narrative-summary-assistant/Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    ports:
+      - "8083:8083"
+    env_file:
+      - path: ./backend/.env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATA_SERVICE_URL: http://data-service:8086
+      AUTH_LOCAL_MODE: "true"
+      AGENT_SIMULATE_MODE: ${AGENT_SIMULATE_MODE:-false}
+      AGENT_SIM_DELAY_SECS: ${AGENT_SIM_DELAY_SECS:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LITELLM_DEBUG: ${LITELLM_DEBUG:-true}
+      LITELLM_SSL_VERIFY: ${LITELLM_SSL_VERIFY:-false}
+      SSL_CERT_FILE: /app/ca-bundle.crt
+      REQUESTS_CA_BUNDLE: /app/ca-bundle.crt
+    depends_on:
+      data-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8083/health').read()"]
+      <<: *hc-python
+
+  # ── A3: Event History Assistant ────────────────────────────────────────────
+  event-history:
+    build:
+      context: ./backend
+      dockerfile: agents/event-history-assistant/Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    ports:
+      - "8084:8084"
+    env_file:
+      - path: ./backend/.env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATA_SERVICE_URL: http://data-service:8086
+      AUTH_LOCAL_MODE: "true"
+      AGENT_SIMULATE_MODE: ${AGENT_SIMULATE_MODE:-false}
+      AGENT_SIM_DELAY_SECS: ${AGENT_SIM_DELAY_SECS:-10}
+      LITELLM_SSL_VERIFY: ${LITELLM_SSL_VERIFY:-false}
+      SSL_CERT_FILE: /app/ca-bundle.crt
+      REQUESTS_CA_BUNDLE: /app/ca-bundle.crt
+    depends_on:
+      data-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8084/health').read()"]
+      <<: *hc-python
+
+  # ── A4: Q&A Agent (user-facing, retains S3SessionManager) ──────────────────
+  qna-agent:
+    build:
+      context: ./backend
+      dockerfile: agents/question-answer-agent/Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    ports:
+      - "8087:8087"
+    env_file:
+      - path: ./backend/.env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATA_SERVICE_URL: http://data-service:8086
+      AUTH_LOCAL_MODE: "true"
+      # Gemini-3-flash currently errors on Strands tool calls in this flow.
+      LITELLM_MODEL: ${QNA_LITELLM_MODEL:-litellm_proxy/azure-gpt-5-2}
+      # Local dev uses MinIO for session persistence.
+      S3_LOCAL_MODE: "true"
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,.corp,dev-gateway.apps.gevernova.net},minio,data-service,dynamodb-local,qna-agent
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,.corp,dev-gateway.apps.gevernova.net},minio,data-service,dynamodb-local,qna-agent
+      LITELLM_SSL_VERIFY: ${LITELLM_SSL_VERIFY:-false}
+      SSL_VERIFY: ${SSL_VERIFY:-false}
+      # Use the merged CA bundle created in the Dockerfile.
+      SSL_CERT_FILE: /app/ca-bundle.crt
+      REQUESTS_CA_BUNDLE: /app/ca-bundle.crt
+      AWS_CA_BUNDLE: /app/ca-bundle.crt
+    volumes:
+      # Local dev only — mount host AWS credentials into the container.
+      # In AWS ECS, remove this volume and use IAM task roles instead.
+      - ${HOME}/.aws:/home/appuser/.aws:ro
+    depends_on:
+      data-service:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8087/health').read()"]
+      <<: *hc-python
+
+  # ── Orchestrator (LangGraph serial pipeline) ──────────────────────────────────
+  orchestrator:
+    build:
+      context: ./backend
+      dockerfile: agents/orchestrator/Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    # No host port published — orchestrator is internal-only.
+    # data-service reaches it via Docker service DNS (orchestrator:8081).
+    env_file:
+      - path: ./backend/.env.example
+      - path: ./backend/.env
+        required: false
+    environment:
+      RISK_EVAL_URL: http://risk-eval:8082
+      NARRATIVE_SUMMARY_URL: http://narrative:8083
+      EVENT_HISTORY_URL: http://event-history:8084
+      DATA_SERVICE_URL: ${DATA_SERVICE_URL:-http://data-service:8086}
+      AGENT_CALL_TIMEOUT_SECS: ${AGENT_CALL_TIMEOUT_SECS:-0}
+      ORCHESTRATOR_LOCAL_MODE: ${ORCHESTRATOR_LOCAL_MODE:-false}
+      DYNAMODB_ENDPOINT_URL: http://dynamodb-local:8000
+      LANGGRAPH_CHECKPOINTER_TABLE: ${LANGGRAPH_CHECKPOINTER_TABLE:-orchestrator-checkpointer}
+      # ORCHESTRATOR_USE_DYNAMODB comes from env_file (backend/.env) so
+      # compose-level interpolation doesn't hard-code false.
+      ORCHESTRATOR_USE_DYNAMODB: ${ORCHESTRATOR_USE_DYNAMODB:-true}
+      ORCHESTRATOR_CHECKPOINTER_TYPE: ${ORCHESTRATOR_CHECKPOINTER_TYPE:-dynamodb}
+      APP_PREFIX: ${APP_PREFIX:-uai3071390-dev-sdg}
+    depends_on:
+      risk-eval:
+        condition: service_healthy
+      narrative:
+        condition: service_healthy
+      event-history:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8081/health').read()"]
+      <<: *hc-python
+
+  # ── Frontend (React + nginx) ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        VITE_ENABLE_MOCKS: ${VITE_ENABLE_MOCKS:-false}
+        VITE_DATA_SERVICE_URL: ${VITE_DATA_SERVICE_URL:-}
+        VITE_QNA_AGENT_URL: ${VITE_QNA_AGENT_URL:-}
+    ports:
+      - "8080:8080"
+      - "3000:8080"
+    environment:
+      # nginx template variables — injected by envsubst at container startup.
+      # Local Docker compose: Docker internal DNS + no namespace suffix.
+      # ECS Fargate: set NGINX_RESOLVER=169.254.169.253 and
+      #              SERVICE_NAMESPACE=.<your-cloud-map-namespace> (e.g. .sdg.local)
+      NGINX_PORT: ${NGINX_PORT:-8080}
+      NGINX_RESOLVER: ${NGINX_RESOLVER:-127.0.0.11}
+      SERVICE_NAMESPACE: ${SERVICE_NAMESPACE:-}
+      QNA_UPSTREAM: ${QNA_UPSTREAM:-http://qna-agent:8087}
+      DATA_SERVICE_UPSTREAM: ${DATA_SERVICE_UPSTREAM:-http://data-service:8086}
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  minio-data:

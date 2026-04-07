@@ -1,0 +1,35 @@
+# ==============================================================================
+# backend/.dockerignore — applies to all Docker builds with context: ./backend/
+# ==============================================================================
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Test artefacts
+tests/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Type checking / linting
+.mypy_cache/
+.ruff_cache/
+
+# Dev secrets
+.env
+.env.local
+!.env.example
+
+# Logs
+*.log
+
+# certs/ is intentionally NOT excluded — needed for uv sync CA trust chain
